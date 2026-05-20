@@ -1,21 +1,26 @@
 """
 Enterprise Trade Data Reconciliation
 
-Validates migration integrity by comparing the source legacy CSV extract 
-against the final target Snowflake table. It calculates aggregate checksums 
+Validates migration integrity by comparing the source legacy CSV extract
+against the final target Snowflake table. It calculates aggregate checksums
 (row count, total volume, total price) to prove 100% data fidelity.
+
+Designed to operate both as a standalone script and as an Airflow PythonOperator callable.
 """
 
 import csv
 import snowflake.connector
 import os
-import sys
 from decimal import Decimal
+
+
+CSV_PATH = os.getenv('LEGACY_CSV_PATH', '/opt/airflow/legacy_trades.csv')
+
 
 def calculate_csv_checksums(file_path: str) -> dict:
     """
     Computes aggregations over the legacy CSV file.
-    
+
     Args:
         file_path (str): Path to the legacy CSV extract.
     Returns:
@@ -31,17 +36,18 @@ def calculate_csv_checksums(file_path: str) -> dict:
             row_count += 1
             total_volume += int(row['volume'])
             total_price += Decimal(row['price'])
-            
+
     return {
         'row_count': row_count,
         'total_volume': total_volume,
         'total_price': total_price
     }
 
+
 def calculate_snowflake_checksums() -> dict:
     """
     Queries Snowflake for aggregate checksums of the target table.
-    
+
     Returns:
         dict: Aggregated checksums.
     """
@@ -53,11 +59,11 @@ def calculate_snowflake_checksums() -> dict:
         database='ENTERPRISE_MIGRATION_DB',
         schema='TRADES_SCHEMA'
     )
-    
+
     try:
         cursor = conn.cursor()
         query = '''
-            SELECT 
+            SELECT
                 COUNT(*) as row_count,
                 SUM(volume) as total_volume,
                 SUM(price) as total_price
@@ -65,7 +71,7 @@ def calculate_snowflake_checksums() -> dict:
         '''
         cursor.execute(query)
         result = cursor.fetchone()
-        
+
         return {
             'row_count': result[0] if result[0] is not None else 0,
             'total_volume': result[1] if result[1] is not None else 0,
@@ -74,21 +80,22 @@ def calculate_snowflake_checksums() -> dict:
     finally:
         conn.close()
 
-def run_reconciliation(csv_path: str):
+
+def check_integrity(**context) -> None:
     """
-    Executes the reconciliation process.
+    Airflow-callable entry point for the reconciliation audit task.
+
+    Raises:
+        ValueError: If checksums between source CSV and target Snowflake table do not match,
+                    signalling Airflow to mark the task as failed.
     """
     print("Starting data integrity reconciliation...")
-    
-    print(f"Calculating checksums for source data: {csv_path}")
-    source_checksums = calculate_csv_checksums(csv_path)
-    
+
+    print(f"Calculating checksums for source data: {CSV_PATH}")
+    source_checksums = calculate_csv_checksums(CSV_PATH)
+
     print("Calculating checksums for target Snowflake table...")
-    try:
-        target_checksums = calculate_snowflake_checksums()
-    except Exception as e:
-        print(f"CRITICAL: Failed to connect to Snowflake or execute query. Error: {e}")
-        sys.exit(1)
+    target_checksums = calculate_snowflake_checksums()
 
     print("\n--- Reconciliation Report ---")
     print(f"Metric         | Source CSV | Target DB")
@@ -97,18 +104,24 @@ def run_reconciliation(csv_path: str):
     print(f"Total Volume   | {source_checksums['total_volume']:<10} | {target_checksums['total_volume']:<10}")
     print(f"Total Price    | {source_checksums['total_price']:<10} | {target_checksums['total_price']:<10}")
     print("---------------------------------------")
-    
-    if source_checksums == target_checksums:
-        print("SUCCESS: 100% data integrity verified. Checksums match exactly.")
-        sys.exit(0)
-    else:
-        print("FAILURE: Data mismatch detected. Reconciliation failed.")
-        sys.exit(1)
+
+    if source_checksums != target_checksums:
+        raise ValueError(
+            f"INTEGRITY FAILURE: Checksum mismatch detected. "
+            f"Source={source_checksums} | Target={target_checksums}"
+        )
+
+    print("SUCCESS: 100% data integrity verified. Checksums match exactly.")
+
 
 if __name__ == "__main__":
-    csv_file = "legacy_trades.csv"
-    if not os.path.exists(csv_file):
-        print(f"Source file {csv_file} not found. Run the mock data generator first.")
+    import sys
+    if not os.path.exists(CSV_PATH):
+        print(f"Source file {CSV_PATH} not found. Run the mock data generator first.")
         sys.exit(1)
-        
-    run_reconciliation(csv_file)
+
+    try:
+        check_integrity()
+    except ValueError as e:
+        print(e)
+        sys.exit(1)

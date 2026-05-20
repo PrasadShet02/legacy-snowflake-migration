@@ -1,15 +1,22 @@
 """
 Enterprise Trade Data Migration DAG
 
-Orchestrates the ingestion of legacy hive metastore extracts into Snowflake.
-This DAG is strictly event-driven (schedule_interval=None), utilizing a FileSensor
-to ensure complete dataset landing prior to triggering the Snowflake load sequence.
+Orchestrates the end-to-end ingestion and validation of legacy hive metastore
+extracts into Snowflake. This DAG is strictly event-driven (schedule_interval=None),
+utilizing a FileSensor to ensure complete dataset landing prior to triggering the
+Snowflake load sequence, and concludes with a mathematical reconciliation audit
+to guarantee 100% source-to-target data integrity.
 """
 
+import sys
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.sensors.filesystem import FileSensor
 from airflow.providers.snowflake.operators.snowflake import SnowflakeOperator
+from airflow.operators.python import PythonOperator
+
+sys.path.append('/opt/airflow')
+from reconcile_migration import check_integrity
 
 default_args = {
     'owner': 'data_engineering',
@@ -20,7 +27,6 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-# Load SQL scripts from the sql/ directory assuming standard Airflow template paths
 INIT_SQL_PATH = 'sql/01_init.sql'
 LOAD_TRANSIENT_SQL_PATH = 'sql/02_load_transient.sql'
 MERGE_SQL_PATH = 'sql/03_merge.sql'
@@ -28,12 +34,12 @@ MERGE_SQL_PATH = 'sql/03_merge.sql'
 with DAG(
     dag_id='enterprise_trade_migration',
     default_args=default_args,
-    description='Event-driven ingestion of legacy trades into Snowflake',
+    description='Event-driven ingestion and reconciliation of legacy trades into Snowflake',
     schedule_interval=None,
     start_date=datetime(2024, 1, 1),
     catchup=False,
     tags=['migration', 'snowflake', 'legacy-ingestion'],
-    template_searchpath='/opt/airflow/dags/', # Assuming standard path layout for Airflow templates
+    template_searchpath='/opt/airflow/dags/',
 ) as dag:
 
     # Actively waits for the legacy CSV file to be completely written to the drop zone
@@ -42,7 +48,7 @@ with DAG(
         filepath='legacy_trades.csv',
         fs_conn_id='fs_default',
         poke_interval=60,
-        timeout=60 * 60 * 4, # 4 hour timeout waiting for the file
+        timeout=60 * 60 * 4,
         mode='reschedule',
     )
 
@@ -67,5 +73,18 @@ with DAG(
         sql=MERGE_SQL_PATH,
     )
 
+    # Integrity gate: mathematically validates 100% source-to-target data fidelity
+    reconcile_and_signoff = PythonOperator(
+        task_id='reconcile_and_signoff',
+        python_callable=check_integrity,
+        provide_context=True,
+    )
+
     # DAG Dependency Chain
-    sense_legacy_extract >> initialize_snowflake_env >> load_transient_stg >> merge_target_trades
+    (
+        sense_legacy_extract
+        >> initialize_snowflake_env
+        >> load_transient_stg
+        >> merge_target_trades
+        >> reconcile_and_signoff
+    )

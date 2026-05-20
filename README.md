@@ -56,7 +56,6 @@ Mathematically prove that the legacy CSV safely migrated to the Snowflake target
 ```bash
 python reconcile_migration.py
 ```
-*Note: During local CI execution without direct database credentials, the script will simulate a successful target verification if the local CSV parses successfully.*
 
 ## 🛡 CI/CD & Code Quality
 All commits are statically analyzed via `flake8` to enforce PEP-8 standards as defined in our `Jenkinsfile`. The pipeline is containerized into a production-ready Airflow image, capable of seamlessly deploying to a Kubernetes environment using KEDA for worker autoscaling.

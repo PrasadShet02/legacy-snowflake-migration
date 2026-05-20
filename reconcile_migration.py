@@ -87,10 +87,8 @@ def run_reconciliation(csv_path: str):
     try:
         target_checksums = calculate_snowflake_checksums()
     except Exception as e:
-        print(f"Failed to connect or query Snowflake. Ensure credentials are set as environment variables. Error: {e}")
-        # Providing a mock check capability if Snowflake cannot be connected to during local CI tests
-        print("Falling back to simulated target check for local CI validation.")
-        target_checksums = source_checksums  # Simulate successful match for offline validation
+        print(f"CRITICAL: Failed to connect to Snowflake or execute query. Error: {e}")
+        sys.exit(1)
 
     print("\n--- Reconciliation Report ---")
     print(f"Metric         | Source CSV | Target DB")

@@ -1,0 +1,31 @@
+# Enterprise Airflow Deployment overrides for K8s
+# Tunes the Airflow webserver to prevent intermittent crash loops in heavy clusters
+webserver:
+  startupProbe:
+    # Extending the startup probe due to heavy DAG parsing overhead at startup
+    failureThreshold: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    successThreshold: 1
+    
+  livenessProbe:
+    failureThreshold: 5
+    periodSeconds: 20
+    timeoutSeconds: 5
+
+  readinessProbe:
+    failureThreshold: 5
+    periodSeconds: 20
+    timeoutSeconds: 5
+
+scheduler:
+  startupProbe:
+    failureThreshold: 20
+    periodSeconds: 10
+
+workers:
+  # Optimized autoscaling for concurrent Snowflake loads
+  keda:
+    enabled: true
+    minReplicaCount: 0
+    maxReplicaCount: 20

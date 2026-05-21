@@ -1,4 +1,4 @@
-# Enterprise Trade Data Migration Pipeline
+# Cloud-Native Trade Data Migration Pipeline
 
 This repository contains a robust, event-driven data pipeline engineered to ingest unpredictable, massive-scale trade data payloads from legacy on-premises systems into a cloud-native Snowflake data warehouse. 
 
